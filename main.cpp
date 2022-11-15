@@ -21,6 +21,13 @@ typedef enum
 	ON,
 	OFF
 } Gripper_t;
+typedef enum
+{
+	GET_SIZE,
+	ROT_ZERO,
+	HEIGHT_ZERO,
+	WORKING
+} Robot_t;
 // pneumatyka
 uint64_t lastTick_pomp_enable;
 uint64_t lastTick_pomp_wait;
@@ -33,7 +40,7 @@ const uint64_t first_enable_duration = 8000;
 
 // krańcówki
 bool rot_zero_position;
-bool is_gripper_on;
+bool height_zero;
 
 // hanoi
 uint8_t towers[3] = {0};
@@ -41,6 +48,8 @@ char receive[2];
 int rozmiar;
 int *moves_array;
 int move_index = 0;
+int array_size = 0;
+Robot_t robot = GET_SIZE;
 
 // obrót
 const int rot_speed = 400;
@@ -48,6 +57,9 @@ const int rot_speed = 400;
 // wysokość
 const int height_speed = 1000;
 const int height_of_tire;
+const int gripping_height; // do ustalenia
+const int moving_height = 0;
+
 /*--------- prototypy funkcji -------*/
 // pneumatyka
 void set_pomp(Pomp_t);
@@ -64,6 +76,10 @@ void solve_hanoi(uint8_t size, uint8_t from, uint8_t to, uint8_t aux);
 
 // obrot
 void set_rot_position(int);
+
+// wysokosc
+void set_height_position(int);
+
 void hMain()
 {
 	hMot2.setMotorPolarity(Polarity::Normal);
@@ -74,11 +90,7 @@ void hMain()
 	hMot1.setEncoderPolarity(Polarity::Reversed);
 	set_switches();
 	sys.setLogDev(&Serial);
-	// rozmiar = get_size();
-	// // rozmiar = 3;
-	// int array_size = (pow(2, rozmiar) - 1) * 2;
-	// moves_array = new int[array_size];
-	// solve_hanoi(rozmiar, 1, 3, 2);
+
 	// for (int i = 0; i < array_size; i++)
 	// {
 	// 	printf("TO: %d\n", moves_array[i]);
@@ -93,21 +105,81 @@ void hMain()
 	//    platform.begin(&RPi);
 	for (;;)
 	{
+		switch (robot)
+		{
+		case GET_SIZE:
+			rozmiar = get_size();
+			// rozmiar = 3;
+			array_size = (pow(2, rozmiar) - 1) * 2;
+			moves_array = new int[array_size];
+			solve_hanoi(rozmiar, 1, 3, 2);
+			towers[0] = rozmiar;
+			robot = ROT_ZERO;
+			move_index = 0;
+			break;
+		case ROT_ZERO:
+			hMot2.setPower(rot_speed);
+			if (rot_zero_position)
+			{
+				hMot2.setPower(0);
+				hMot2.resetEncoderCnt();
+				robot = HEIGHT_ZERO;
+			}
+			break;
+		case HEIGHT_ZERO:
+			hMot1.setPower(height_speed);
+			if (height_zero)
+			{
+				hMot1.setPower(0);
+				hMot1.resetEncoderCnt();
+				robot = WORKING;
+			}
+			break;
+		case WORKING:
+			if (move_index < array_size)
+			{
+				set_rot_position(moves_array[move_index]);
+				sys.delay(500);
 
-		Gripper(ON);
-		sys.delay(2000);
-		hMot1.rotAbs(5000, 1000, 1, INFINITE);
-		set_rot_position(3);
-		sys.delay(500);
-		hMot1.rotAbs(0, 1000, 1, INFINITE);
-		sys.delay(500);
-		Gripper(OFF);
-		sys.delay(2000);
-		hMot1.rotAbs(5000, 1000, 1, INFINITE);
-		set_rot_position(1);
-		sys.delay(500);
-		hMot1.rotAbs(0, 1000, 1, INFINITE);
-		sys.delay(500);
+				if (move_index % 2 == 0)
+				{
+					set_height_position(gripping_height + height_of_tire * (towers[moves_array[move_index] - 1]));
+					sys.delay(500);
+					Gripper(OFF);
+					towers[moves_array[move_index] - 1]++;
+				}
+				else
+				{
+					set_height_position(gripping_height + height_of_tire * (towers[moves_array[move_index] - 1] - 1));
+					sys.delay(500);
+					Gripper(ON);
+					towers[moves_array[move_index] - 1]--;
+				}
+				sys.delay(2000);
+				set_height_position(moving_height);
+				sys.delay(500);
+				move_index++;
+			}
+			robot = GET_SIZE;
+			break;
+		default:
+			break;
+		}
+		sys.delay(1);
+		// Gripper(ON);
+		// sys.delay(2000);
+		// hMot1.rotAbs(5000, 1000, 1, INFINITE);
+		// set_rot_position(3);
+		// sys.delay(500);
+		// hMot1.rotAbs(0, 1000, 1, INFINITE);
+		// sys.delay(500);
+		// Gripper(OFF);
+		// sys.delay(2000);
+		// hMot1.rotAbs(5000, 1000, 1, INFINITE);
+		// set_rot_position(1);
+		// sys.delay(500);
+		// hMot1.rotAbs(0, 1000, 1, INFINITE);
+		// sys.delay(500);
 	}
 }
 /*------ Ciała funkcji -------*/
@@ -185,8 +257,8 @@ void check_switches()
 	for (;;)
 	{
 		rot_zero_position = hSens1.pin1.read();
-		is_gripper_on = hSens2.pin1.read();
-		printf("rot: %d gripper: %d\n", rot_zero_position, is_gripper_on);
+		height_zero = hSens2.pin1.read();
+		printf("rot: %d gripper: %d\n", rot_zero_position, height_zero);
 		sys.delay(20);
 	}
 }
@@ -251,4 +323,9 @@ void set_rot_position(int pos)
 	default:
 		break;
 	}
+}
+
+void set_height_position(int height)
+{
+	hMot1.rotAbs(height, height_speed, 1, INFINITE);
 }
